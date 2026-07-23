@@ -86,7 +86,8 @@ int main()
 	       else
 	       {
 		      perror("recv");
-
+		      epoll_ctl(epoll_fd,EPOLL_CTL_DEL,curfd,NULL);
+                      close(curfd);
 	       }
 
 	      }
