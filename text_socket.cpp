@@ -5,6 +5,8 @@
 #include<unistd.h>
 #include<sys/epoll.h>
 #include<fcntl.h>
+#include<cerrno>
+#include<csignal>
 
 //设置非阻塞
 int setnonblocking(int fd)
@@ -60,35 +62,57 @@ int main()
 		int cfd = accept(curfd,NULL,NULL);
 		setnonblocking(cfd); //设置非阻塞
 		//新得到的文件描述符添加到epoll模型中，下一轮循环的时候就可以被检测了
-		ev.events = EPOLLIN; //读缓冲区是否有数据
-		ev.data.fd = cfd;;
+		ev.events = EPOLLIN | EPOLLET; //读缓冲区是否有数据
+		ev.data.fd = cfd;
+		setnonblocking(cfd);
                 epoll_ctl(epoll_fd,EPOLL_CTL_ADD,cfd,&ev);
+		printf("新客户端连接成功,fd = %d\n",cfd);
 	      }
 	      else
 	      {
-               //处理通信的文件描述符
+              //处理通信的文件描述符
 	       //接收数据
 	       char buf[1024];
-	       memset(buf,0,sizeof(buf));
-	       int len = recv(curfd,buf,sizeof(buf),0);
-	       if(len == 0)
+	       while(1)
 	       {
-		       printf("客户端已经断开了连接\n");
-		       //将这个文件描述符从epoll模型中删除
-		       epoll_ctl(epoll_fd,EPOLL_CTL_DEL,curfd,NULL);
-		       close(curfd);
+                memset(buf,0,sizeof(buf));
+		int len = recv(curfd,buf,sizeof(buf)-1,0);
+
+		if(len > 0)
+		{
+			printf("客户端(fd = %d) say: %s\n",curfd,buf);
+			send(curfd,buf,len,0);
+		}
+		else if(len == 0)
+		{
+			printf("客户端(fd = %d)已经断开连接\n",curfd);
+			epoll_ctl(epoll_fd,EPOLL_CTL_DEL,curfd,NULL);
+			close(curfd);
+			break;
+		}
+		else
+		{
+			if(errno == EAGAIN || errno == EWOULDBLOCK)
+			{
+				break;
+			}
+			else if(errno == EINTR)
+			{
+			        continue;
+			}
+			else
+			{
+			        perror("recv error");
+				epoll_ctl(epoll_fd,EPOLL_CTL_DEL,curfd,NULL);
+				close(curfd);
+				break;
+			}
+
+
+		}
+
 	       }
-	       else if(len > 0)
-	       {
-	         printf("客户端say:%s\n",buf);
-		 send(curfd,buf,len,0);
-	       }
-	       else
-	       {
-		      perror("recv");
-		      epoll_ctl(epoll_fd,EPOLL_CTL_DEL,curfd,NULL);
-                      close(curfd);
-	       }
+
 
 	      }
 
