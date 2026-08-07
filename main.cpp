@@ -3,12 +3,13 @@
 #include <fcntl.h>
 #include <cstring>
 #include <cerrno>
+#include<unordered_map>
 
+#include "Connection.h"
 #include "Socket.h"
 #include "Epoller.h"
 
 const uint16_t PORT = 8888;
-const int BUF_SIZE = 1024;
 
 // 辅助函数：将客户端 fd 设置为非阻塞
 void setNonBlocking(int fd) {
@@ -29,6 +30,7 @@ int main() {
 
     // 2. 注册监听套接字到 Epoller
     Epoller epoller(1024);
+    std::unordered_map<int,Connection*> connections;
     epoller.addFd(serverSock.fd(), EPOLLIN | EPOLLET);
 
     // 3. 事件大循环 (Event Loop)
@@ -58,41 +60,28 @@ int main() {
 
                     setNonBlocking(clientFd);
                     epoller.addFd(clientFd, EPOLLIN | EPOLLET);
+
+		    Connection* conn = new Connection(clientFd);
+		    connections[clientFd] = conn;
                     std::cout << "Client [" << clientFd << "] connected." << std::endl;
                 }
             } 
             // 情况 B：可读事件发生
             else if (events & EPOLLIN) {
-                char buf[BUF_SIZE];
-                while (true) {
-                    ::memset(buf, 0, sizeof(buf));
-                    ssize_t bytesRead = ::read(eventFd, buf, sizeof(buf) - 1);
-                    
-                    if (bytesRead < 0) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            break; // 本次缓冲区数据已全部读取完毕
-                        }
-                        std::cerr << "Read error on fd " << eventFd << std::endl;
-                        epoller.delFd(eventFd);
-                        ::close(eventFd);
-                        break;
-                    } 
-                    else if (bytesRead == 0) {
-                        // 客户端正常断开连接
-                        std::cout << "Client [" << eventFd << "] disconnected." << std::endl;
-                        epoller.delFd(eventFd);
-                        ::close(eventFd);
-                        break;
-                    } 
-                    else {
-                        // Echo 回显并检查 write 返回值
-                        std::cout << "Receive from [" << eventFd << "]: " << buf;
-                        ssize_t bytesWritten = ::write(eventFd, buf, bytesRead);
-                        if (bytesWritten < 0) {
-                            std::cerr << "Write error on fd " << eventFd << std::endl;
-                        }
-                    }
-                }
+		    auto it = connections.find(eventFd);
+		    if(it != connections.end()) {
+                         Connection* conn = it->second;
+			 conn->handleRead();
+			 conn->handleWrite();
+
+			 if(conn->isClosed())
+			 {
+                           epoller.delFd(eventFd);
+			   connections.erase(it);
+			   delete conn;
+			   std::cout << "Client [" << eventFd << "] connection cleaned up." << std::endl;
+			 }
+		    }
             }
         }
     }
