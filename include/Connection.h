@@ -2,6 +2,10 @@
 #define CONNECTION_H
 
 #include<string>
+#include<memory>
+#include"Channel.h"
+#include"HttpParser.h"
+#include"HttpRequest.h"
 
 class Connection {
 public:
@@ -27,10 +31,25 @@ public:
        //获取底层fd(供Epoller使用)
        int fd() const;
 
+       //暴露Channel供Reactor使用（只给使用权，不给所有权）
+       Channel* getChannel();
+
+       //追加数据到读缓冲区（handleRead时调用）
+       void appendToReadBuffer(const char* data,size_t len) {
+         m_readBuffer.append(data,len);
+       }
+
+       //获取读缓冲区的引用（HttpParser需要读取和消费数据）
+       std::string& readBuffer() {return m_readBuffer;}
+
 private:
        int m_fd; //客户端连接的套接字句柄
        bool m_closed; //标记连接是否已关闭
        std::string m_writeBuffer; //待发送的数据
+       std::unique_ptr<Channel> m_channel; //Connection独占Channel的所有权
+       std::string m_readBuffer; //暂存从客户端读到的原始字节流
+       HttpParser m_parser;
+       HttpRequest m_request;
 };
 
 

@@ -6,7 +6,18 @@
 
 static const int BUF_SIZE = 1024;
 
-Connection::Connection(int fd) : m_fd(fd),m_closed(false){}
+Connection::Connection(int fd) : m_fd(fd)
+				 ,m_closed(false)
+                                 ,m_channel(std::make_unique<Channel>(fd))
+                                  {
+				    //让Channel默认关心可读事件
+                                    m_channel->enableRead();
+
+				    //把Connection的成员函数绑定为Channel的回调
+				    m_channel->setReadCallback([this](){this->handleRead();});
+				    m_channel->setWriteCallback([this](){this->handleWrite( );});
+				    m_channel->setErrorCallback([this](){this->m_closed = true;});
+				  }
 
 Connection::~Connection(){
        if(!m_closed){
@@ -23,9 +34,26 @@ void Connection::handleRead() {
 	  ssize_t bytesRead = ::read(m_fd,buf,sizeof(buf)-1);
 
 	  if(bytesRead > 0) {
-            //只负责读取，数据暂存到writeBuffer
-	    printf("Client[%d]: %s",m_fd,buf);
-	    m_writeBuffer.append(buf,bytesRead);
+            //追加到读缓冲区
+	    m_readBuffer.append(buf,bytesRead);
+
+	    //驱动解析器，可能多次解析（如果有粘包）
+	    while(m_parser.parse(m_readBuffer,m_request)) {
+              //解析完成，生成简单的Http响应
+	      std::string response;
+	      response += "HTTP/1.1 200 OK\r\n";
+	      response += "Content-Type: text/plain\r\n";
+	      std::string body = "Hello,World!";
+	      response += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+	      response += "\r\n";
+	      response += body;
+
+	      m_writeBuffer = std::move(response);
+              handleWrite();  //立即发送（Echo阶段可接受）
+              
+	      //重置request,准备解析下一个请求(Keep-Alive 基础)
+	      m_request.clear();
+	    }
 	   }
 	  else if(bytesRead == 0)
 	  {
@@ -100,4 +128,8 @@ bool Connection::isClosed() const {
 
 int Connection::fd() const {
   return  m_fd;
+}
+
+Channel* Connection::getChannel(){
+  return m_channel.get();
 }
