@@ -61,6 +61,7 @@ int main() {
 					setNonBlocking(clientFd);
 
 					Connection* conn = new Connection(clientFd);
+					conn->setEpoller(&epoller);
 					connections[clientFd] = conn;
 
 					Channel* channel = conn->getChannel();

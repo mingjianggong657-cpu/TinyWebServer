@@ -23,6 +23,7 @@ public:
        //修改Channel关心的事件类型（只改m_events,不调用epoll_ctl）
        void enableRead();  //m_events |= EPOLLIN
        void enableWrite(); //m_events |= EPOLLOUT
+       void disableWrite(); //只清除EPOLLOUT标志，保留EPOLLIN等其他事件
        void disableAll(); //m_events = 0
 
        //Getters

@@ -6,6 +6,7 @@
 #include"Channel.h"
 #include"HttpParser.h"
 #include"HttpRequest.h"
+class Epoller;
 
 class Connection {
 public:
@@ -34,6 +35,8 @@ public:
        //暴露Channel供Reactor使用（只给使用权，不给所有权）
        Channel* getChannel();
 
+       void setEpoller(Epoller* epoller);
+
        //追加数据到读缓冲区（handleRead时调用）
        void appendToReadBuffer(const char* data,size_t len) {
          m_readBuffer.append(data,len);
@@ -47,6 +50,8 @@ private:
        bool m_closed; //标记连接是否已关闭
        std::string m_writeBuffer; //待发送的数据
        std::unique_ptr<Channel> m_channel; //Connection独占Channel的所有权
+       Epoller* m_epoller;  //用于同步内核epoll事件
+       bool m_closeAfterWrite; //标记：响应发送完成后是否关闭连接
        std::string m_readBuffer; //暂存从客户端读到的原始字节流
        HttpParser m_parser;
        HttpRequest m_request;

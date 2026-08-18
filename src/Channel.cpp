@@ -53,3 +53,8 @@ int Channel::fd() const {
 uint32_t Channel::events() const {
       return m_events;
 }
+
+void Channel::disableWrite() {
+     //用位运算清除EPOLLOUT位，不影响其他位
+     m_events &= ~EPOLLOUT;
+}

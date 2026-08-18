@@ -1,4 +1,5 @@
 #include "Connection.h"
+#include "Epoller.h"
 #include <unistd.h>
 #include <cstring>
 #include <cstdio>
@@ -12,6 +13,8 @@ Connection::Connection(int fd)
 	: m_fd(fd)
 	, m_closed(false)
 	  , m_channel(std::make_unique<Channel>(fd))
+	  , m_epoller(nullptr)
+	  , m_closeAfterWrite(false)
 {
 	// 默认关心可读事件
 	m_channel->enableRead();
@@ -20,6 +23,10 @@ Connection::Connection(int fd)
 	m_channel->setReadCallback([this]() { this->handleRead(); });
 	m_channel->setWriteCallback([this]() { this->handleWrite(); });
 	m_channel->setErrorCallback([this]() { this->m_closed = true; });
+}
+
+void Connection::setEpoller(Epoller* epoller) {
+       m_epoller = epoller;
 }
 
 // 析构函数：如果连接还没关闭，自动关闭 fd
@@ -76,16 +83,21 @@ void Connection::handleRead() {
 
 					//追加到写缓冲区，不要覆盖未发完的数据
 					m_writeBuffer += response;
-					handleWrite();
+					
+					//当前HTTP请求已经处理完，无论是否关闭连接，都要清空解析状态
+					m_request.clear();
 
 					//根据keepAlive决定是否关闭连接
 					if(!keepAlive) {
 						//客户端要求关闭，发送完成后标记关闭
-						m_closed = true;
+						m_closeAfterWrite = true;
 					}
-					else{
-						//保持连接，重置请求对象，准备解析下一个请求
-						m_request.clear();
+					
+					//有数据需要发送，开启EPOLLOUT，等待内核通知可写
+					if(m_epoller) {
+                                           m_channel->enableWrite();
+					   //同步到内核epoll,注意保留EPOLLET
+					   m_epoller->modFd(m_fd,m_channel->events() | EPOLLET);
 					}
 
 				} else {
@@ -146,6 +158,20 @@ void Connection::handleWrite() {
 	// 删除已经发送的数据，保留未发送完的部分
 	if (total > 0) {
 		m_writeBuffer.erase(0, total);
+	}
+
+	//如果写缓冲区已经清空，说明响应全部发送完成
+	if(m_writeBuffer.empty()) {
+           //关闭EPOLLOUT，让连接回到只等待读事件的状态
+	   if(m_epoller) {
+              m_channel->disableWrite();
+	      m_epoller->modFd(m_fd,m_channel->events() | EPOLLET);
+	   }
+
+	   //如果之前请求要求关闭连接，现在才真正标记关闭
+	   if(m_closeAfterWrite) {
+              m_closed = true;
+	   }
 	}
 }
 
