@@ -4,10 +4,12 @@
 #include <cstring>
 #include <cerrno>
 #include<unordered_map>
+#include<vector>
 
 #include "Connection.h"
 #include "Socket.h"
 #include "Epoller.h"
+#include "HeapTimer.h"
 
 const uint16_t PORT = 8888;
 
@@ -30,12 +32,16 @@ int main() {
 
 	// 2. 注册监听套接字到 Epoller
 	Epoller epoller(1024);
+	HeapTimer timer;
+	const int TIMEOUT_MS = 30000; //30秒无活动关闭连接
 	std::unordered_map<int,Connection*> connections;
 	epoller.addFd(serverSock.fd(), EPOLLIN | EPOLLET);
 
 	// 3. 事件大循环 (Event Loop)
 	while (true) {
-		int eventCnt = epoller.wait(-1);
+		//获取下一个超时事件，传给epoll_wait作为超时参数
+		int timeoutMs = timer.getNextTimeout();
+		int eventCnt = epoller.wait(timeoutMs);
 		if (eventCnt < 0) {
 			if (errno == EINTR) continue; // 被信号打断，继续循环
 			std::cerr << "epoll wait error!" << std::endl;
@@ -66,6 +72,8 @@ int main() {
 
 					Channel* channel = conn->getChannel();
 					epoller.addFd(channel->fd(),channel->events() | EPOLLET);
+                                        //新连接加入定时器
+      					timer.addTimer(clientFd,TIMEOUT_MS);
 
 					std::cout << "Client [" << clientFd << "] connected." << std::endl;
 				}
@@ -76,17 +84,38 @@ int main() {
 				if(it != connections.end()) {
                                         Connection* conn = it->second;
 					conn->getChannel()->handleEvent(events);
+                                        
+					//发生了读写事件，刷新定时器
+                                        if(!conn->isClosed() && (events & (EPOLLIN | EPOLLOUT))) {
+      timer.adjustTimer(eventFd,TIMEOUT_MS);
+					}
+ 
+
 
 					if(conn->isClosed())
 					{
 						epoller.delFd(eventFd);
 						connections.erase(it);
+						timer.removeTimer(eventFd);
 						delete conn;
 						std::cout << "Client [" << eventFd << "] connection cleaned up." << std::endl;
 					}
 				}
 			}
 		}
+                     //处理超时连接
+		     std::vector<int> expiredFds = timer.tick();
+		     for(int fd : expiredFds) {
+                        auto it = connections.find(fd);
+			if(it != connections.end()) {
+                          Connection* conn = it->second;
+			  epoller.delFd(fd);
+			  connections.erase(it);
+			  delete conn;
+			  std::cout << "Client [" << fd << "] timeout,connection cleaned up." << std::endl;
+			}
+		     }
+
 	}
 
 	return 0;

@@ -29,11 +29,9 @@ void Connection::setEpoller(Epoller* epoller) {
        m_epoller = epoller;
 }
 
-// 析构函数：如果连接还没关闭，自动关闭 fd
 Connection::~Connection() {
-	if (!m_closed) {
-		::close(m_fd);
-	}
+	//始终关闭文件描述符，避免泄露
+	::close(m_fd);
 }
 
 // 处理可读事件：读取数据、解析 HTTP 请求、生成响应
